@@ -53,14 +53,6 @@ SKILLS_VALIDES = {
     "Muscle-Up", "Handstand", "Dragon Flag", "One Arm Pull-Up",
 }
 
-MATERIELS_VALIDES = {
-    "Barre de traction", "Anneaux", "Barres parallèles",
-    "Barre verticale", "Sol", "Parallettes", "Lest (ceinture/gilet)",
-}
-
-PREREQ_VALEURS = {"oui", "en_cours", "non"}
-
-
 class FormData(BaseModel):
     skill_cible: str = Field(..., description="Skill calisthenics cible")
     prerequis: dict[str, str] = Field(default_factory=dict, description="Évaluation des prérequis")
@@ -72,19 +64,6 @@ class FormData(BaseModel):
     def skill_valide(cls, v):
         if v not in SKILLS_VALIDES:
             raise ValueError(f"Skill invalide : {v}. Valides : {SKILLS_VALIDES}")
-        return v
-
-    @validator("prerequis")
-    def prereqs_valides(cls, v):
-        for k, val in v.items():
-            if val not in PREREQ_VALEURS:
-                raise ValueError(f"Valeur prérequis invalide '{val}' pour '{k}'")
-        return v
-
-    @validator("materiel", each_item=True)
-    def materiel_valide(cls, v):
-        if v not in MATERIELS_VALIDES:
-            raise ValueError(f"Matériel invalide : {v}")
         return v
 
 
