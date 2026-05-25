@@ -112,7 +112,7 @@ Matériel disponible: {', '.join(data.materiel)}
 {conseil_skill}
 
 ═══ RÈGLES DU PROGRAMME ═══
-1. Génère exactement 2 semaines de progression (semaine 1 et semaine 2 seulement)
+1. Génère exactement 4 semaines de progression
 2. Chaque semaine a exactement {data.frequence_semaine} séances
 3. Adapte les exercices STRICTEMENT au matériel disponible
 4. Respecte le volume cohérent avec {data.duree_seance_min} min/séance
@@ -230,7 +230,7 @@ async def generate(data: FormData, request: Request):
                 {"role": "user", "content": prompt},
             ],
             temperature=0.3,
-            max_tokens=8000,
+            max_tokens=16000,
         )
     except Exception as e:
         log.error(f"[generate] Erreur Mistral API : {e}")
