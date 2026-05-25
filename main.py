@@ -54,17 +54,11 @@ SKILLS_VALIDES = {
 }
 
 class FormData(BaseModel):
-    skill_cible: str = Field(..., description="Skill calisthenics cible")
-    prerequis: dict[str, str] = Field(default_factory=dict, description="Évaluation des prérequis")
-    frequence_semaine: int = Field(..., ge=2, le=6, description="Nombre de séances par semaine")
-    duree_seance_min: int = Field(..., ge=20, le=120, description="Durée d'une séance en minutes")
-    materiel: list[str] = Field(..., min_items=1, description="Matériel disponible")
-
-    @validator("skill_cible")
-    def skill_valide(cls, v):
-        if v not in SKILLS_VALIDES:
-            raise ValueError(f"Skill invalide : {v}. Valides : {SKILLS_VALIDES}")
-        return v
+    skill_cible: str
+    prerequis: dict = {}
+    frequence_semaine: int
+    duree_seance_min: int
+    materiel: list[str]
 
 
 # ─── Builder de prompt ───────────────────────────────────────────
@@ -118,7 +112,7 @@ Matériel disponible: {', '.join(data.materiel)}
 {conseil_skill}
 
 ═══ RÈGLES DU PROGRAMME ═══
-1. Génère exactement 4 semaines de progression
+1. Génère exactement 2 semaines de progression (semaine 1 et semaine 2 seulement)
 2. Chaque semaine a exactement {data.frequence_semaine} séances
 3. Adapte les exercices STRICTEMENT au matériel disponible
 4. Respecte le volume cohérent avec {data.duree_seance_min} min/séance
@@ -236,7 +230,7 @@ async def generate(data: FormData, request: Request):
                 {"role": "user", "content": prompt},
             ],
             temperature=0.3,
-            max_tokens=4000,
+            max_tokens=8000,
         )
     except Exception as e:
         log.error(f"[generate] Erreur Mistral API : {e}")
