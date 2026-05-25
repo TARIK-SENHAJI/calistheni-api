@@ -7,11 +7,12 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install \
-    fastapi==0.115.0 \
-    uvicorn==0.30.6 \
+RUN pip install --upgrade pip && \
+    pip install \
     mistralai==1.9.7 \
-    pydantic==2.7.0
+    fastapi \
+    uvicorn \
+    pydantic
 
 COPY main.py .
 
