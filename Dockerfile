@@ -15,7 +15,5 @@ RUN pip install --upgrade pip && \
     pydantic
 
 COPY main.py .
-COPY start.sh .
-RUN chmod +x start.sh
 
-CMD ["/bin/sh", "start.sh"]
+CMD ["python", "main.py"]
