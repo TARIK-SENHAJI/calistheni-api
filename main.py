@@ -401,9 +401,14 @@ def send_email_with_pdf(to_email: str, programme: dict, pdf_bytes: bytes):
             "Content-Type": "application/json"
         }
     )
-    with urllib.request.urlopen(req) as resp:
-        result = json.loads(resp.read())
-        log.info(f"[send_pdf] Email envoyé à {to_email} | id={result.get('id')}")
+    try:
+        with urllib.request.urlopen(req) as resp:
+            result = json.loads(resp.read())
+            log.info(f"[send_pdf] Email envoyé à {to_email} | id={result.get('id')}")
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode()
+        log.error(f"[send_pdf] Resend error {e.code}: {error_body}")
+        raise ValueError(f"Resend {e.code}: {error_body}")
 
 
 @app.post("/send-pdf")
