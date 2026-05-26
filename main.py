@@ -83,86 +83,55 @@ CONSEILS_PAR_SKILL = {
 
 
 def build_prompt(data: FormData) -> str:
-    # Formatage prérequis
-    if data.prerequis:
-        prereq_lines = "\n".join(
-            f"  - {k}: {LABELS_PREREQ.get(v, v)}"
-            for k, v in data.prerequis.items()
-        )
-    else:
-        prereq_lines = "  (non renseignés — suppose un niveau débutant intermédiaire)"
+    prereq_lines = ""
+    for k, v in data.prerequis.items():
+        label = "maitrise" if v == "oui" else "en cours" if v == "en_cours" else "pas encore"
+        prereq_lines += f"- {k}: {label}
+"
 
-    # Conseils spécifiques au skill
-    conseil_skill = CONSEILS_PAR_SKILL.get(data.skill_cible, "")
+    return f"""Tu es un coach calisthenics. Genere un programme pour 1 semaine.
 
-    # Calcul volume indicatif
-    volume_note = (
-        "Programme léger" if data.frequence_semaine <= 2
-        else "Volume modéré" if data.frequence_semaine <= 4
-        else "Volume élevé — prévoir récupération active"
-    )
+PROFIL:
+- Skill cible: {data.skill_cible}
+- Seances par semaine: {data.frequence_semaine}
+- Duree: {data.duree_seance_min} min
+- Materiel: {", ".join(data.materiel)}
+- Prerequis:
+{prereq_lines or "- non renseignes"}
 
-    return f"""Tu es Tarik, coach calisthenics expert avec 10 ans d'expérience.
-Tu dois générer un programme de progression ultra-personnalisé pour un athlète.
+REGLES STRICTES:
+- Maximum 4 exercices par seance
+- Conseils courts: max 6 mots
+- Utilise "reps" OU "duree_sec", pas les deux
+- JSON valide uniquement, aucun texte autour
 
-═══ PROFIL ATHLÈTE ═══
-Skill cible        : {data.skill_cible}
-Fréquence          : {data.frequence_semaine} séances/semaine ({volume_note})
-Durée par séance   : {data.duree_seance_min} minutes
-Matériel disponible: {', '.join(data.materiel)}
-
-═══ ÉVALUATION PRÉREQUIS ═══
-{prereq_lines}
-
-═══ DIRECTIVES COACH ═══
-{conseil_skill}
-
-═══ RÈGLES DU PROGRAMME ═══
-1. Génère exactement 1 semaine de programme
-2. Chaque semaine a exactement {data.frequence_semaine} séances
-3. Adapte les exercices STRICTEMENT au matériel disponible
-4. Respecte le volume cohérent avec {data.duree_seance_min} min/séance
-5. La progression doit être réaliste semaine par semaine (volume ou intensité +5-10%)
-6. Chaque conseil doit être CONCRET et TECHNIQUE (pas générique)
-7. Utilise "duree_sec" pour les isométriques/holds, "reps" pour le dynamique (l'autre vaut null)
-8. Les jours de repos : nomme-les "Repos actif" ou répartis intelligemment
-
-═══ FORMAT DE RÉPONSE ═══
-Réponds UNIQUEMENT avec le JSON ci-dessous, rien d'autre, aucun texte avant ou après.
-
-```json
+FORMAT JSON EXACT:
 {{
   "skill_target": "{data.skill_cible}",
-  "niveau_actuel": "description précise du niveau actuel basée sur les prérequis évalués",
-  "duree_programme_semaines": 4,
+  "niveau_actuel": "description courte",
   "programme": [
     {{
       "semaine": 1,
-      "objectif": "Objectif spécifique et mesurable de cette semaine",
-      "charge": "légère | modérée | élevée",
+      "objectif": "objectif court",
       "seances": [
         {{
           "jour": "Lundi",
-          "focus": "Thème de la séance (ex: Force scapulaire, Technique tuck FL...)",
-          "duree_estimee_min": {data.duree_seance_min},
           "exercices": [
             {{
-              "id": "snake_case_id",
-              "nom": "Nom complet de l'exercice",
+              "nom": "Nom exercice",
               "sets": 3,
               "reps": 8,
               "duree_sec": null,
               "repos_sec": 90,
-              "conseil": "Conseil technique précis et actionnable en une phrase",
-              "media_key": "cle_pour_animation"
+              "conseil": "conseil court",
+              "media_key": "cle"
             }}
           ]
         }}
       ]
     }}
   ]
-}}
-```"""
+}}"""
 
 
 # ─── Parsing JSON robuste ────────────────────────────────────────
