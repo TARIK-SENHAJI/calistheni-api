@@ -13,8 +13,7 @@ RUN pip install --upgrade pip && \
     fastapi \
     uvicorn \
     pydantic \
-    fpdf2 \
-    resend
+    fpdf2
 
 COPY main.py .
 
