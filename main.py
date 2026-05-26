@@ -376,7 +376,7 @@ def send_email_with_pdf(to_email: str, programme: dict, pdf_bytes: bytes):
     pdf_b64 = base64.b64encode(pdf_bytes).decode()
 
     payload = json.dumps({
-        "from": "Calistheni <programme@calistheni.com>",
+        "from": "Calistheni <onboarding@resend.dev>",
         "to": [to_email],
         "subject": f"Ton programme {skill} — Calistheni",
         "html": f"""
