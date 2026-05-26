@@ -398,16 +398,16 @@ def generate_pdf(programme: dict) -> bytes:
     niveau = clean(programme.get("niveau_actuel", "-"))
 
     # Header
-    pdf.set_fill_color(20, 20, 20)
-    pdf.rect(0, 0, 210, 42, "F")
     pdf.set_font("Helvetica", "B", 22)
-    pdf.set_text_color(255, 255, 255)
-    pdf.cell(0, 22, "", ln=True)
-    pdf.cell(0, 14, f"CALISTHENI - {skill}", ln=True, align="C")
+    pdf.set_text_color(20, 20, 20)
+    pdf.ln(6)
+    pdf.cell(0, 14, "CALISTHENI - " + skill, ln=True, align="C")
     pdf.set_font("Helvetica", "", 10)
-    pdf.set_text_color(180, 180, 180)
+    pdf.set_text_color(130, 130, 130)
     pdf.cell(0, 8, niveau, ln=True, align="C")
     pdf.ln(8)
+
+
 
     for week in programme.get("programme", []):
         objectif = clean(week.get("objectif", ""))
