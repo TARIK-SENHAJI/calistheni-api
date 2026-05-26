@@ -28,8 +28,7 @@ app = FastAPI(title="Calistheni API", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://calistheni.com", "https://www.calistheni.com", "http://localhost", "http://127.0.0.1:5500"],
-    allow_credentials=True,
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
