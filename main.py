@@ -2,13 +2,7 @@ import json
 import re
 import os
 import logging
-import smtplib
-import io
 from datetime import datetime
-from email.mime.multipart import MIMEMultipart
-from email.mime.base import MIMEBase
-from email.mime.text import MIMEText
-from email import encoders
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
