@@ -86,8 +86,7 @@ def build_prompt(data: FormData) -> str:
     prereq_lines = ""
     for k, v in data.prerequis.items():
         label = "maitrise" if v == "oui" else "en cours" if v == "en_cours" else "pas encore"
-        prereq_lines += f"- {k}: {label}
-"
+        prereq_lines += f"- {k}: {label}\n"
 
     return f"""Tu es un coach calisthenics. Genere un programme pour 1 semaine.
 
