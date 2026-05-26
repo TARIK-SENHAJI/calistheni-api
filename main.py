@@ -397,11 +397,10 @@ def send_email_with_pdf(to_email: str, programme: dict, pdf_bytes: bytes):
     msg.attach(part)
 
     # ── Envoyer via Brevo SMTP ──
-    with smtplib.SMTP("smtp-relay.brevo.com", 587) as server:
-        server.starttls()
+    with smtplib.SMTP_SSL("smtp-relay.brevo.com", 465) as server:
         server.login(smtp_user, smtp_pass)
         server.sendmail(smtp_user, to_email, msg.as_string())
-        log.info(f"[send_pdf] Email envoye a {to_email} via Brevo SMTP")
+        log.info(f"[send_pdf] Email envoye a {to_email} via Brevo SMTP SSL")
 
 
 @app.post("/send-pdf")
