@@ -364,43 +364,53 @@ def generate_pdf(programme: dict) -> bytes:
 
 
 def send_email_with_pdf(to_email: str, programme: dict, pdf_bytes: bytes):
-    """Envoie le PDF par email via SMTP Brevo - contourne Cloudflare."""
-    smtp_user = os.environ.get("BREVO_SMTP_USER")
-    smtp_pass = os.environ.get("BREVO_SMTP_PASS")
-    if not smtp_user or not smtp_pass:
-        raise ValueError("BREVO_SMTP_USER ou BREVO_SMTP_PASS manquants")
+    """Envoie le PDF via API HTTP Brevo (pas de Cloudflare, pas de SMTP)."""
+    import urllib.request
+    import urllib.error
+
+    api_key = os.environ.get("BREVO_API_KEY")
+    if not api_key:
+        raise ValueError("BREVO_API_KEY manquante")
 
     skill = programme.get("skill_target", "Programme")
     filename = f"programme_{skill.lower().replace(' ', '_')}.pdf"
+    pdf_b64 = base64.b64encode(pdf_bytes).decode()
 
-    # ── Construire le message ──
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"Ton programme {skill} - Calistheni"
-    msg["From"] = f"Calistheni <{smtp_user}>"
-    msg["To"] = to_email
+    payload = json.dumps({
+        "sender": {"name": "Calistheni", "email": "ac9288001@smtp-brevo.com"},
+        "to": [{"email": to_email}],
+        "subject": f"Ton programme {skill} - Calistheni",
+        "htmlContent": f"""
+        <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:40px 32px;background:#0d0d0d;border-radius:12px;">
+          <h1 style="color:#fff;font-size:26px;margin:0 0 8px;">Ton programme est pret !</h1>
+          <p style="color:#999;margin:0 0 20px;">Skill : <strong style="color:#e8632a">{skill}</strong></p>
+          <p style="color:#ccc;line-height:1.7;">Ton programme personnalise est en piece jointe. Suis la progression semaine par semaine.</p>
+          <p style="color:#555;font-size:13px;margin-top:28px;">Tarik - calistheni.com</p>
+        </div>""",
+        "attachment": [{
+            "name": filename,
+            "content": pdf_b64
+        }]
+    }).encode("utf-8")
 
-    html_body = f"""
-    <div style="font-family:sans-serif;max-width:520px;margin:0 auto;background:#0d0d0d;color:#e8eaf0;padding:40px 32px;border-radius:12px;">
-      <h1 style="font-size:28px;margin:0 0 8px;color:#fff;">Ton programme est pret !</h1>
-      <p style="color:#999;margin:0 0 24px;">Skill cible : <strong style="color:#e8632a">{skill}</strong></p>
-      <p style="color:#ccc;line-height:1.7;">Retrouve ton programme personnalise en piece jointe PDF. Suis la progression et reviens generer un nouveau programme quand tu maitrises ce skill.</p>
-      <p style="margin:32px 0 8px;color:#666;font-size:13px;">Tarik — calistheni.com</p>
-    </div>
-    """
-    msg.attach(MIMEText(html_body, "html"))
-
-    # ── Attacher le PDF ──
-    part = MIMEBase("application", "octet-stream")
-    part.set_payload(pdf_bytes)
-    encoders.encode_base64(part)
-    part.add_header("Content-Disposition", f'attachment; filename="{filename}"')
-    msg.attach(part)
-
-    # ── Envoyer via Brevo SMTP ──
-    with smtplib.SMTP_SSL("smtp-relay.brevo.com", 465) as server:
-        server.login(smtp_user, smtp_pass)
-        server.sendmail(smtp_user, to_email, msg.as_string())
-        log.info(f"[send_pdf] Email envoye a {to_email} via Brevo SMTP SSL")
+    req = urllib.request.Request(
+        "https://api.brevo.com/v3/smtp/email",
+        data=payload,
+        headers={
+            "accept": "application/json",
+            "api-key": api_key,
+            "content-type": "application/json"
+        },
+        method="POST"
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            result = json.loads(resp.read())
+            log.info(f"[send_pdf] Email envoye a {to_email} | messageId={result.get('messageId')}")
+    except urllib.error.HTTPError as e:
+        body = e.read().decode()
+        log.error(f"[send_pdf] Brevo API error {e.code}: {body}")
+        raise ValueError(f"Brevo {e.code}: {body}")
 
 
 @app.post("/send-pdf")
