@@ -12,7 +12,8 @@ RUN pip install --upgrade pip && \
     mistralai==1.9.7 \
     fastapi \
     uvicorn \
-    pydantic
+    pydantic \
+    fpdf2
 
 COPY main.py .
 
