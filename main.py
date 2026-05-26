@@ -2,13 +2,20 @@ import json
 import re
 import os
 import logging
+import smtplib
+import io
 from datetime import datetime
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email.mime.text import MIMEText
+from email import encoders
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, validator
 from mistralai import Mistral
+from fpdf import FPDF
 
 # ─── Logging ────────────────────────────────────────────────────
 logging.basicConfig(
@@ -230,7 +237,7 @@ async def generate(data: FormData, request: Request):
                 {"role": "user", "content": prompt},
             ],
             temperature=0.3,
-            max_tokens=16000,
+            max_tokens=6000,
         )
     except Exception as e:
         log.error(f"[generate] Erreur Mistral API : {e}")
@@ -251,6 +258,132 @@ async def generate(data: FormData, request: Request):
 
     log.info(f"[generate] Programme généré : {len(validated.get('programme', []))} semaines")
     return validated
+
+
+# ─── PDF Generator ──────────────────────────────────────────────
+class SendPDFRequest(BaseModel):
+    email: str
+    programme: dict
+
+def generate_pdf(programme: dict) -> bytes:
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+
+    # ── Header ──
+    pdf.set_fill_color(20, 20, 20)
+    pdf.rect(0, 0, 210, 40, 'F')
+    pdf.set_font("Helvetica", "B", 28)
+    pdf.set_text_color(255, 255, 255)
+    pdf.cell(0, 20, "", ln=True)
+    pdf.cell(0, 16, f"CALISTHENI — {programme.get('skill_target','').upper()}", ln=True, align='C')
+
+    pdf.set_font("Helvetica", "", 11)
+    pdf.set_text_color(180, 180, 180)
+    pdf.cell(0, 8, f"Niveau actuel : {programme.get('niveau_actuel', '—')}", ln=True, align='C')
+    pdf.ln(10)
+
+    # ── Semaines ──
+    for week in programme.get('programme', []):
+        # Week header
+        pdf.set_fill_color(232, 99, 42)
+        pdf.set_text_color(255, 255, 255)
+        pdf.set_font("Helvetica", "B", 13)
+        pdf.cell(0, 10, f"  SEMAINE {week.get('semaine', '')}  —  {week.get('objectif', '')}", ln=True, fill=True)
+        pdf.ln(3)
+
+        for seance in week.get('seances', []):
+            # Day title
+            pdf.set_fill_color(240, 240, 240)
+            pdf.set_text_color(30, 30, 30)
+            pdf.set_font("Helvetica", "B", 11)
+            pdf.cell(0, 8, f"  {seance.get('jour', '').upper()}", ln=True, fill=True)
+            pdf.ln(2)
+
+            for ex in seance.get('exercices', []):
+                pdf.set_text_color(20, 20, 20)
+                pdf.set_font("Helvetica", "B", 10)
+                pdf.cell(0, 6, f"    {ex.get('nom', '')}", ln=True)
+
+                # Stats
+                pdf.set_font("Helvetica", "", 9)
+                pdf.set_text_color(100, 100, 100)
+                sets = ex.get('sets', '')
+                reps = ex.get('reps')
+                dur = ex.get('duree_sec')
+                repos = ex.get('repos_sec', '')
+                vol = f"{dur}s hold" if dur else f"{reps} reps"
+                pdf.cell(0, 5, f"    {sets} séries × {vol}  |  Repos : {repos}s", ln=True)
+
+                conseil = ex.get('conseil', '')
+                if conseil:
+                    pdf.set_font("Helvetica", "I", 8)
+                    pdf.set_text_color(130, 130, 130)
+                    pdf.multi_cell(0, 5, f"    → {conseil}", align='L')
+                pdf.ln(2)
+            pdf.ln(3)
+
+    # ── Footer ──
+    pdf.set_y(-20)
+    pdf.set_font("Helvetica", "I", 8)
+    pdf.set_text_color(160, 160, 160)
+    pdf.cell(0, 8, "Généré par calistheni.com — Agent IA Calisthenics", align='C')
+
+    return bytes(pdf.output())
+
+
+def send_email_with_pdf(to_email: str, programme: dict, pdf_bytes: bytes):
+    resend_api_key = os.environ.get("RESEND_API_KEY")
+    if not resend_api_key:
+        raise ValueError("RESEND_API_KEY manquante")
+
+    import urllib.request
+    import base64
+
+    skill = programme.get('skill_target', 'Programme')
+    pdf_b64 = base64.b64encode(pdf_bytes).decode()
+
+    payload = json.dumps({
+        "from": "Calistheni <programme@calistheni.com>",
+        "to": [to_email],
+        "subject": f"Ton programme {skill} — Calistheni",
+        "html": f"""
+        <div style="font-family:sans-serif;max-width:520px;margin:0 auto;background:#0d0d0d;color:#e8eaf0;padding:40px 32px;border-radius:12px;">
+          <h1 style="font-size:28px;margin:0 0 8px;color:#fff;">Ton programme est prêt 🔥</h1>
+          <p style="color:#999;margin:0 0 24px;">Skill cible : <strong style="color:#e8632a">{skill}</strong></p>
+          <p style="color:#ccc;line-height:1.7;">Retrouve ton programme personnalisé de 4 semaines en pièce jointe. Suis la progression et reviens générer un nouveau programme quand tu maîtrises ce skill.</p>
+          <p style="margin:32px 0 0;color:#666;font-size:13px;">— Tarik, calistheni.com</p>
+        </div>
+        """,
+        "attachments": [{
+            "filename": f"programme_{skill.lower().replace(' ','_')}.pdf",
+            "content": pdf_b64
+        }]
+    }).encode()
+
+    req = urllib.request.Request(
+        "https://api.resend.com/emails",
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {resend_api_key}",
+            "Content-Type": "application/json"
+        }
+    )
+    with urllib.request.urlopen(req) as resp:
+        result = json.loads(resp.read())
+        log.info(f"[send_pdf] Email envoyé à {to_email} | id={result.get('id')}")
+
+
+@app.post("/send-pdf")
+async def send_pdf(req: SendPDFRequest, request: Request):
+    log.info(f"[send_pdf] email={req.email} | skill={req.programme.get('skill_target')}")
+    try:
+        pdf_bytes = generate_pdf(req.programme)
+        send_email_with_pdf(req.email, req.programme, pdf_bytes)
+        return {"success": True, "message": f"Programme envoyé à {req.email}"}
+    except Exception as e:
+        log.error(f"[send_pdf] Erreur : {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ─── Gestionnaire d'erreurs global ──────────────────────────────
