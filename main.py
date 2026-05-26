@@ -2,8 +2,13 @@ import json
 import re
 import os
 import logging
+import base64
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
 from datetime import datetime
-
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -359,50 +364,44 @@ def generate_pdf(programme: dict) -> bytes:
 
 
 def send_email_with_pdf(to_email: str, programme: dict, pdf_bytes: bytes):
-    resend_api_key = os.environ.get("RESEND_API_KEY")
-    if not resend_api_key:
-        raise ValueError("RESEND_API_KEY manquante")
+    """Envoie le PDF par email via SMTP Brevo - contourne Cloudflare."""
+    smtp_user = os.environ.get("BREVO_SMTP_USER")
+    smtp_pass = os.environ.get("BREVO_SMTP_PASS")
+    if not smtp_user or not smtp_pass:
+        raise ValueError("BREVO_SMTP_USER ou BREVO_SMTP_PASS manquants")
 
-    import urllib.request
-    import base64
+    skill = programme.get("skill_target", "Programme")
+    filename = f"programme_{skill.lower().replace(' ', '_')}.pdf"
 
-    skill = programme.get('skill_target', 'Programme')
-    pdf_b64 = base64.b64encode(pdf_bytes).decode()
+    # ── Construire le message ──
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = f"Ton programme {skill} - Calistheni"
+    msg["From"] = f"Calistheni <{smtp_user}>"
+    msg["To"] = to_email
 
-    payload = json.dumps({
-        "from": "Calistheni <onboarding@resend.dev>",
-        "to": [to_email],
-        "subject": f"Ton programme {skill} — Calistheni",
-        "html": f"""
-        <div style="font-family:sans-serif;max-width:520px;margin:0 auto;background:#0d0d0d;color:#e8eaf0;padding:40px 32px;border-radius:12px;">
-          <h1 style="font-size:28px;margin:0 0 8px;color:#fff;">Ton programme est prêt 🔥</h1>
-          <p style="color:#999;margin:0 0 24px;">Skill cible : <strong style="color:#e8632a">{skill}</strong></p>
-          <p style="color:#ccc;line-height:1.7;">Retrouve ton programme personnalisé de 4 semaines en pièce jointe. Suis la progression et reviens générer un nouveau programme quand tu maîtrises ce skill.</p>
-          <p style="margin:32px 0 0;color:#666;font-size:13px;">— Tarik, calistheni.com</p>
-        </div>
-        """,
-        "attachments": [{
-            "filename": f"programme_{skill.lower().replace(' ','_')}.pdf",
-            "content": pdf_b64
-        }]
-    }).encode()
+    html_body = f"""
+    <div style="font-family:sans-serif;max-width:520px;margin:0 auto;background:#0d0d0d;color:#e8eaf0;padding:40px 32px;border-radius:12px;">
+      <h1 style="font-size:28px;margin:0 0 8px;color:#fff;">Ton programme est pret !</h1>
+      <p style="color:#999;margin:0 0 24px;">Skill cible : <strong style="color:#e8632a">{skill}</strong></p>
+      <p style="color:#ccc;line-height:1.7;">Retrouve ton programme personnalise en piece jointe PDF. Suis la progression et reviens generer un nouveau programme quand tu maitrises ce skill.</p>
+      <p style="margin:32px 0 8px;color:#666;font-size:13px;">Tarik — calistheni.com</p>
+    </div>
+    """
+    msg.attach(MIMEText(html_body, "html"))
 
-    req = urllib.request.Request(
-        "https://api.resend.com/emails",
-        data=payload,
-        headers={
-            "Authorization": f"Bearer {resend_api_key}",
-            "Content-Type": "application/json"
-        }
-    )
-    try:
-        with urllib.request.urlopen(req) as resp:
-            result = json.loads(resp.read())
-            log.info(f"[send_pdf] Email envoyé à {to_email} | id={result.get('id')}")
-    except urllib.error.HTTPError as e:
-        error_body = e.read().decode()
-        log.error(f"[send_pdf] Resend error {e.code}: {error_body}")
-        raise ValueError(f"Resend {e.code}: {error_body}")
+    # ── Attacher le PDF ──
+    part = MIMEBase("application", "octet-stream")
+    part.set_payload(pdf_bytes)
+    encoders.encode_base64(part)
+    part.add_header("Content-Disposition", f'attachment; filename="{filename}"')
+    msg.attach(part)
+
+    # ── Envoyer via Brevo SMTP ──
+    with smtplib.SMTP("smtp-relay.brevo.com", 587) as server:
+        server.starttls()
+        server.login(smtp_user, smtp_pass)
+        server.sendmail(smtp_user, to_email, msg.as_string())
+        log.info(f"[send_pdf] Email envoye a {to_email} via Brevo SMTP")
 
 
 @app.post("/send-pdf")
