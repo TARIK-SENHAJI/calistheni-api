@@ -345,7 +345,7 @@ def send_email_with_pdf(to_email: str, programme: dict, pdf_bytes: bytes):
     pdf_b64 = base64.b64encode(pdf_bytes).decode()
 
     payload = json.dumps({
-        "sender": {"name": "Calistheni", "email": "ac9288001@smtp-brevo.com"},
+        "sender": {"name": "Calistheni", "email": os.environ.get("BREVO_SENDER_EMAIL", "ac9288001@smtp-brevo.com")},
         "to": [{"email": to_email}],
         "subject": f"Ton programme {skill} - Calistheni",
         "htmlContent": f"""
