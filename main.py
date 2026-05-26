@@ -265,61 +265,93 @@ class SendPDFRequest(BaseModel):
     email: str
     programme: dict
 
+def clean(text: str) -> str:
+    """Remplace les caractères unicode non supportés par Helvetica."""
+    if not text:
+        return ""
+    replacements = {
+        "—": "-", "–": "-", "’": "'", "‘": "'",
+        "“": '"', "”": '"', "é": "e", "è": "e",
+        "ê": "e", "à": "a", "â": "a", "ô": "o",
+        "û": "u", "ù": "u", "î": "i", "ï": "i",
+        "ç": "c", "É": "E", "À": "A", "…": "...",
+        "°": " deg", "×": "x", "→": "->", "«": '"',
+        "»": '"',
+    }
+    for orig, repl in replacements.items():
+        text = text.replace(orig, repl)
+    return text.encode('latin-1', errors='replace').decode('latin-1')
+
+
 def generate_pdf(programme: dict) -> bytes:
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
 
+    skill = clean(programme.get("skill_target", "").upper())
+    niveau = clean(programme.get("niveau_actuel", "-"))
+
     # ── Header ──
     pdf.set_fill_color(20, 20, 20)
-    pdf.rect(0, 0, 210, 40, 'F')
-    pdf.set_font("Helvetica", "B", 28)
+    pdf.rect(0, 0, 210, 40, "F")
+    pdf.set_font("Helvetica", "B", 24)
     pdf.set_text_color(255, 255, 255)
     pdf.cell(0, 20, "", ln=True)
-    pdf.cell(0, 16, f"CALISTHENI — {programme.get('skill_target','').upper()}", ln=True, align='C')
+    pdf.cell(0, 16, f"CALISTHENI - {skill}", ln=True, align="C")
 
-    pdf.set_font("Helvetica", "", 11)
+    pdf.set_font("Helvetica", "", 10)
     pdf.set_text_color(180, 180, 180)
-    pdf.cell(0, 8, f"Niveau actuel : {programme.get('niveau_actuel', '—')}", ln=True, align='C')
+    pdf.cell(0, 8, f"Niveau actuel : {niveau}", ln=True, align="C")
     pdf.ln(10)
 
     # ── Semaines ──
-    for week in programme.get('programme', []):
-        # Week header
+    for week in programme.get("programme", []):
+        objectif = clean(week.get("objectif", ""))
+        semaine_n = week.get("semaine", "")
+
         pdf.set_fill_color(232, 99, 42)
         pdf.set_text_color(255, 255, 255)
-        pdf.set_font("Helvetica", "B", 13)
-        pdf.cell(0, 10, f"  SEMAINE {week.get('semaine', '')}  —  {week.get('objectif', '')}", ln=True, fill=True)
+        pdf.set_font("Helvetica", "B", 12)
+        header_text = f"  SEMAINE {semaine_n}"
+        if objectif:
+            header_text += f"  -  {objectif}"
+        pdf.cell(0, 10, header_text, ln=True, fill=True)
         pdf.ln(3)
 
-        for seance in week.get('seances', []):
-            # Day title
+        for seance in week.get("seances", []):
+            jour = clean(seance.get("jour", "")).upper()
+            focus = clean(seance.get("focus", ""))
+
             pdf.set_fill_color(240, 240, 240)
             pdf.set_text_color(30, 30, 30)
-            pdf.set_font("Helvetica", "B", 11)
-            pdf.cell(0, 8, f"  {seance.get('jour', '').upper()}", ln=True, fill=True)
+            pdf.set_font("Helvetica", "B", 10)
+            jour_text = f"  {jour}"
+            if focus:
+                jour_text += f"  |  {focus}"
+            pdf.cell(0, 8, jour_text, ln=True, fill=True)
             pdf.ln(2)
 
-            for ex in seance.get('exercices', []):
+            for ex in seance.get("exercices", []):
+                nom = clean(ex.get("nom", ""))
+                conseil = clean(ex.get("conseil", ""))
+                sets = ex.get("sets", "")
+                reps = ex.get("reps")
+                dur = ex.get("duree_sec")
+                repos = ex.get("repos_sec", "")
+                vol = f"{dur}s hold" if dur else f"{reps} reps"
+
                 pdf.set_text_color(20, 20, 20)
                 pdf.set_font("Helvetica", "B", 10)
-                pdf.cell(0, 6, f"    {ex.get('nom', '')}", ln=True)
+                pdf.cell(0, 6, f"    {nom}", ln=True)
 
-                # Stats
                 pdf.set_font("Helvetica", "", 9)
                 pdf.set_text_color(100, 100, 100)
-                sets = ex.get('sets', '')
-                reps = ex.get('reps')
-                dur = ex.get('duree_sec')
-                repos = ex.get('repos_sec', '')
-                vol = f"{dur}s hold" if dur else f"{reps} reps"
-                pdf.cell(0, 5, f"    {sets} séries × {vol}  |  Repos : {repos}s", ln=True)
+                pdf.cell(0, 5, f"    {sets} series x {vol}  |  Repos : {repos}s", ln=True)
 
-                conseil = ex.get('conseil', '')
                 if conseil:
                     pdf.set_font("Helvetica", "I", 8)
                     pdf.set_text_color(130, 130, 130)
-                    pdf.multi_cell(0, 5, f"    → {conseil}", align='L')
+                    pdf.multi_cell(0, 5, f"    -> {conseil}", align="L")
                 pdf.ln(2)
             pdf.ln(3)
 
@@ -327,7 +359,7 @@ def generate_pdf(programme: dict) -> bytes:
     pdf.set_y(-20)
     pdf.set_font("Helvetica", "I", 8)
     pdf.set_text_color(160, 160, 160)
-    pdf.cell(0, 8, "Généré par calistheni.com — Agent IA Calisthenics", align='C')
+    pdf.cell(0, 8, "Genere par calistheni.com - Agent IA Calisthenics", align="C")
 
     return bytes(pdf.output())
 
