@@ -37,6 +37,10 @@ MISTRAL_API_KEY = os.environ.get("MISTRAL_API_KEY")
 mistral = Mistral(api_key=MISTRAL_API_KEY) if MISTRAL_API_KEY else None
 MODEL = os.environ.get("MISTRAL_MODEL", "mistral-small-latest")
 
+# ─── Stockage temporaire des commandes en attente de paiement ───
+# { "email": { "programme": {...}, "created_at": "..." } }
+pending_orders: dict = {}
+
 # ─── Schémas ────────────────────────────────────────────────────
 class FormData(BaseModel):
     skill_cible: str
@@ -46,6 +50,10 @@ class FormData(BaseModel):
     materiel: list[str]
 
 class SendPDFRequest(BaseModel):
+    email: str
+    programme: dict
+
+class SaveOrderRequest(BaseModel):
     email: str
     programme: dict
 
@@ -229,7 +237,6 @@ OBJECTIFS = {
 # ════════════════════════════════════════════════════════════════
 
 def evaluer_niveau(prerequis: dict) -> str:
-    """Evalue le niveau depuis les prérequis sans LLM."""
     if not prerequis:
         return "debutant"
     oui = sum(1 for v in prerequis.values() if v == "oui")
@@ -253,20 +260,14 @@ def niveau_to_texte(niveau: str, skill: str) -> str:
 
 
 def build_programme(data: FormData) -> dict:
-    """Construit le programme 100% déterministe depuis la bibliothèque."""
     skill = data.skill_cible
     niveau = evaluer_niveau(data.prerequis)
     exercices_dispo = EXERCICES.get(skill, {}).get(niveau, [])
-
-    # Filtrer selon matériel si nécessaire
-    # (simplification : on garde tout, le coach ajuste en live)
     max_ex_per_seance = 4
     n_seances = min(data.frequence_semaine, 6)
-
     seances = []
     for i in range(n_seances):
         jour = JOURS_SEMAINE[i] if n_seances <= 7 else f"Seance {i+1}"
-        # Rotation des exercices selon le jour
         start = (i * 2) % len(exercices_dispo) if exercices_dispo else 0
         exs = []
         for j in range(min(max_ex_per_seance, len(exercices_dispo))):
@@ -282,7 +283,6 @@ def build_programme(data: FormData) -> dict:
                 "media_key": ex["media_key"],
             })
         seances.append({"jour": jour, "exercices": exs})
-
     return {
         "skill_target": skill,
         "niveau_actuel": niveau_to_texte(niveau, skill),
@@ -294,7 +294,6 @@ def build_programme(data: FormData) -> dict:
     }
 
 
-# ─── Personnalisation LLM ────────────────────────────────────────
 def personnaliser_programme(programme: dict, data: FormData) -> dict:
     if not mistral:
         return programme
@@ -356,16 +355,100 @@ def personnaliser_programme(programme: dict, data: FormData) -> dict:
 async def generate(data: FormData, request: Request):
     log.info(f"[generate] skill={data.skill_cible} | frequence={data.frequence_semaine}")
     try:
-        # 1. Structure 100% deterministe
         programme = build_programme(data)
-
-        # 2. Personnalisation LLM sur les textes uniquement
         programme = personnaliser_programme(programme, data)
-
         return programme
     except Exception as e:
         log.error(f"[generate] Erreur: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ════════════════════════════════════════════════════════════════
+# NOUVELLE ROUTE — Sauvegarder la commande en attente de paiement
+# Appelée par le frontend AVANT le clic PayPal
+# ════════════════════════════════════════════════════════════════
+@app.post("/save-order")
+async def save_order(req: SaveOrderRequest):
+    """
+    Sauvegarde le programme en mémoire associé à l'email.
+    Appelé juste avant que l'utilisateur clique sur PayPal.
+    """
+    if not req.email or "@" not in req.email:
+        raise HTTPException(status_code=400, detail="Email invalide")
+    pending_orders[req.email.lower().strip()] = {
+        "programme": req.programme,
+        "created_at": datetime.utcnow().isoformat(),
+    }
+    log.info(f"[save-order] Commande sauvegardee pour {req.email}")
+    return {"success": True}
+
+
+# ════════════════════════════════════════════════════════════════
+# NOUVELLE ROUTE — Webhook PayPal
+# PayPal appelle cette URL automatiquement après chaque paiement
+# ════════════════════════════════════════════════════════════════
+@app.post("/paypal-webhook")
+async def paypal_webhook(request: Request):
+    """
+    Reçoit la notification PayPal après paiement confirmé.
+    Récupère l'email du payeur, retrouve son programme, envoie le PDF.
+    """
+    try:
+        body = await request.json()
+        log.info(f"[paypal-webhook] Event recu: {body.get('event_type')}")
+
+        # On ne traite que les paiements complétés
+        event_type = body.get("event_type", "")
+        if event_type not in ("PAYMENT.CAPTURE.COMPLETED", "CHECKOUT.ORDER.APPROVED"):
+            return {"ignored": True}
+
+        # Extraire l'email du payeur depuis la structure PayPal
+        email = None
+        try:
+            resource = body.get("resource", {})
+            # Chemin 1 : capture directe
+            email = resource.get("payer", {}).get("email_address")
+            # Chemin 2 : dans les purchase_units
+            if not email:
+                units = resource.get("purchase_units", [])
+                if units:
+                    email = units[0].get("payee", {}).get("email_address")
+            # Chemin 3 : dans supplementary_data
+            if not email:
+                email = (resource
+                    .get("supplementary_data", {})
+                    .get("related_ids", {})
+                    .get("order_id"))
+        except Exception as parse_err:
+            log.warning(f"[paypal-webhook] Erreur extraction email: {parse_err}")
+
+        if not email:
+            log.warning("[paypal-webhook] Email introuvable dans le payload")
+            return {"error": "email_not_found"}
+
+        email = email.lower().strip()
+        log.info(f"[paypal-webhook] Paiement confirme pour {email}")
+
+        # Retrouver la commande en attente
+        order = pending_orders.get(email)
+        if not order:
+            log.warning(f"[paypal-webhook] Aucune commande en attente pour {email}")
+            return {"error": "order_not_found"}
+
+        # Générer et envoyer le PDF
+        programme = order["programme"]
+        pdf_bytes = generate_pdf(programme)
+        send_email_with_pdf(email, programme, pdf_bytes)
+
+        # Supprimer la commande une fois traitée
+        del pending_orders[email]
+        log.info(f"[paypal-webhook] PDF envoye avec succes a {email}")
+        return {"success": True}
+
+    except Exception as e:
+        log.error(f"[paypal-webhook] Erreur: {e}")
+        # On retourne 200 pour éviter que PayPal ne réessaie en boucle
+        return {"error": str(e)}
 
 
 # ════════════════════════════════════════════════════════════════
@@ -392,11 +475,8 @@ def generate_pdf(programme: dict) -> bytes:
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
-
     skill = clean(programme.get("skill_target", "").upper())
     niveau = clean(programme.get("niveau_actuel", "-"))
-
-    # Header
     pdf.set_font("Helvetica", "B", 22)
     pdf.set_text_color(20, 20, 20)
     pdf.ln(6)
@@ -405,9 +485,6 @@ def generate_pdf(programme: dict) -> bytes:
     pdf.set_text_color(130, 130, 130)
     pdf.cell(0, 8, niveau, ln=True, align="C")
     pdf.ln(8)
-
-
-
     for week in programme.get("programme", []):
         objectif = clean(week.get("objectif", ""))
         pdf.set_fill_color(232, 99, 42)
@@ -415,7 +492,6 @@ def generate_pdf(programme: dict) -> bytes:
         pdf.set_font("Helvetica", "B", 12)
         pdf.cell(0, 10, f"  SEMAINE {week.get('semaine', 1)}  -  {objectif}", ln=True, fill=True)
         pdf.ln(3)
-
         for seance in week.get("seances", []):
             jour = clean(seance.get("jour", "")).upper()
             pdf.set_fill_color(235, 235, 235)
@@ -423,7 +499,6 @@ def generate_pdf(programme: dict) -> bytes:
             pdf.set_font("Helvetica", "B", 10)
             pdf.cell(0, 8, f"  {jour}", ln=True, fill=True)
             pdf.ln(2)
-
             for ex in seance.get("exercices", []):
                 nom = clean(ex.get("nom", ""))
                 conseil = clean(ex.get("conseil", ""))
@@ -432,7 +507,6 @@ def generate_pdf(programme: dict) -> bytes:
                 dur = ex.get("duree_sec")
                 repos = ex.get("repos_sec", "")
                 vol = f"{dur}s" if dur else f"{reps} reps"
-
                 pdf.set_text_color(20, 20, 20)
                 pdf.set_font("Helvetica", "B", 10)
                 pdf.cell(0, 6, f"    {nom}", ln=True)
@@ -445,12 +519,10 @@ def generate_pdf(programme: dict) -> bytes:
                     pdf.cell(0, 5, f"    -> {conseil}", ln=True)
                 pdf.ln(2)
             pdf.ln(3)
-
     pdf.set_y(-18)
     pdf.set_font("Helvetica", "I", 8)
     pdf.set_text_color(160, 160, 160)
     pdf.cell(0, 8, "Genere par calistheni.com", align="C")
-
     return bytes(pdf.output())
 
 
@@ -458,12 +530,10 @@ def send_email_with_pdf(to_email: str, programme: dict, pdf_bytes: bytes):
     api_key = os.environ.get("BREVO_API_KEY")
     if not api_key:
         raise ValueError("BREVO_API_KEY manquante")
-
     skill = programme.get("skill_target", "Programme")
     filename = f"programme_{skill.lower().replace(' ', '_')}.pdf"
     pdf_b64 = base64.b64encode(pdf_bytes).decode()
     sender_email = os.environ.get("BREVO_SENDER_EMAIL", "noreply@calistheni.com")
-
     payload = json.dumps({
         "sender": {"name": "Calistheni", "email": sender_email},
         "to": [{"email": to_email}],
@@ -477,7 +547,6 @@ def send_email_with_pdf(to_email: str, programme: dict, pdf_bytes: bytes):
         </div>""",
         "attachment": [{"name": filename, "content": pdf_b64}]
     }).encode("utf-8")
-
     req = urllib.request.Request(
         "https://api.brevo.com/v3/smtp/email",
         data=payload,
